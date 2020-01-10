@@ -7,7 +7,7 @@ incdir		= $(DESTDIR)${prefix}/include
 all: all-programs
 
 CFLAGS = -O2 -Wall -Iinclude
-CPPFLAGS = -DDEBUG_EXE -DRDS_VERSION=\"2.0.4\" -MD -MP -MF $(@D)/.$(basename $(@F)).d
+CPPFLAGS = -DDEBUG_EXE -DRDS_VERSION=\"2.0.6\" -MD -MP -MF $(@D)/.$(basename $(@F)).d
 
 HEADERS = kernel-list.h pfhack.h include/rds.h
 COMMON_SOURCES = pfhack.c
@@ -55,7 +55,7 @@ ifneq ($(LOCAL_DFILES),)
 -include $(LOCAL_DFILES)
 endif
 
-VERSION := 2.0.4
+VERSION := 2.0.6
 RELEASE := 1
 
 TAR_PREFIX := rds-tools-$(VERSION)
@@ -72,8 +72,6 @@ EXTRA_DIST := 	rds-info.1 \
 		configure \
 		README \
 		rds-tools.txt \
-		stap/rds.stp \
-		stap/README \
 		docs/rds-architecture.txt \
 		examples/Makefile \
 		examples/rds-sample.c \

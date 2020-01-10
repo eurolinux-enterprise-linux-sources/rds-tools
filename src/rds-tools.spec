@@ -1,6 +1,6 @@
 Summary: RDS support tools 
 Name: rds-tools
-Version: 2.0.4
+Version: 2.0.6
 Release: 1
 License: GPL/BSD
 Group: Applications/Internet

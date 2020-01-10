@@ -1,20 +1,15 @@
 Name:		rds-tools
 Summary:	RDS support tools 
-Version:	2.0.4
+Version:	2.0.6
 Release:	3%{?dist}
-License:	GPLv2+ or BSD
+License:	GPLv2 or BSD
 Group:		Applications/System
 URL:		http://oss.oracle.com/projects/rds/
-# As per the rds site above, the RDS user space tools are distributed through
-# the OpenFabrics Enterprise Distribution (OFED).  In order to get the
-# current rds-tools tarball, you need to download the current OFED distribution,
-# unpack it, install the rds-tools src rpm, then grab the tarball from your
-# rpm SOURCES directory.  The OFED distribution can be downloaded from:
-# http://www.openfabrics.org/downloads/OFED/
-Source0:	rds-tools-%{version}.tar.gz
+Source0:	http://oss.oracle.com/projects/rds/dist/files/sources/%{name}-%{version}.tar.gz
 Source1:	rds-tools-modprobe.conf
 Patch0:		rds-tools-1.5-pfhack.patch
 Patch1:		rds-tools-make.patch
+Patch2:		rds-tools-2.0.6-ping-segfault.patch
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 ExcludeArch:	s390 s390x
 
@@ -25,32 +20,50 @@ hardware.
 
 %prep
 %setup -q
+# Only try to define certain items if our build environment is old enough
+# that it doesn't define them for us
 %patch0 -p1
+# Leave debugging info enabled so that we can get valid debug rpms
 %patch1 -p1
+# rds-ping can segfault due to reusing sockets too early, fix that
+%patch2 -p1 -b .segfault
 
 %build
 %configure
-make %{?_smp_mflags}
+make CFLAGS="$CFLAGS -Iinclude" %{?_smp_mflags}
 
 %install
-rm -rf $RPM_BUILD_ROOT
-make DESTDIR=$RPM_BUILD_ROOT install
-chmod 0755 %{buildroot}%{_bindir}/*
+rm -rf %{buildroot}
+make DESTDIR=%{buildroot} install
 rm -fr %{buildroot}%{_includedir}
-install -p -m 644 -D %{SOURCE1} ${RPM_BUILD_ROOT}%{_sysconfdir}/modprobe.d/rds.conf
+install -p -m 644 -D %{SOURCE1} %{buildroot}%{_sysconfdir}/modprobe.d/rds.conf
 
 
 %clean
-rm -rf $RPM_BUILD_ROOT
+rm -rf %{buildroot}
 
 %files
 %defattr(-,root,root)
-%doc README docs examples
+%doc docs examples
 %{_bindir}/*
 %{_mandir}/*/*
 %{_sysconfdir}/modprobe.d/rds.conf
 
 %changelog
+* Fri May 04 2012 Doug Ledford <dledford@redhat.com> - 2.0.6-3
+- Fix segfault in rds-ping for real this time
+- Resolves: bz804002
+
+* Wed Mar 21 2012 Doug Ledford <dledford@redhat.com> - 2.0.6-2
+- Fix segfault in rds-ping with short timeout values
+- Resolves: bz804002
+
+* Fri Jan 06 2012 Doug Ledford <dledford@redhat.com> - 2.0.6-1
+- Update to latest upstream version
+- Initial Fedora import
+- Multiple fixes for package review
+- Related: bz739138
+
 * Fri Feb 04 2011 Doug Ledford <dledford@redhat.com> - 2.0.4-3
 - Update a few things for rpmdiff checks
 

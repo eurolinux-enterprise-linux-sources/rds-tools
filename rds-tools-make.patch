@@ -14,7 +14,7 @@
  install: $(PROGRAMS)
  	install -d $(bindir)
 -	install -m 555 -s $(PROGRAMS) $(bindir)
-+	install -m 555 $(PROGRAMS) $(bindir)
++	install -m 755 $(PROGRAMS) $(bindir)
  	install -d $(mandir)/man1
  	install -d $(mandir)/man7
  	install -m 644 *.1 $(mandir)/man1
