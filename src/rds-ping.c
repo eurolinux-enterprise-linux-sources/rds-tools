@@ -48,11 +48,9 @@
 #include <sys/poll.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include "net/rds.h"
+#include "rds.h"
 
-#ifdef DYNAMIC_PF_RDS
 #include "pfhack.h"
-#endif
 
 #define die(fmt...) do {		\
 	fprintf(stderr, fmt);		\
@@ -257,11 +255,17 @@ rds_socket(struct in_addr *src, struct in_addr *dst)
 {
 	struct sockaddr_in sin;
 	int fd;
+	int pf;
 
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;
 
-	fd = socket(PF_RDS, SOCK_SEQPACKET, 0);
+#ifdef DYNAMIC_PF_RDS
+        pf = discover_pf_rds();
+#else
+        pf = PF_RDS;
+#endif
+	fd = socket(pf, SOCK_SEQPACKET, 0);
 	if (fd < 0)
 		die_errno("unable to create RDS socket");
 
@@ -299,6 +303,8 @@ rds_socket(struct in_addr *src, struct in_addr *dst)
 static void
 usage(const char *complaint)
 {
+        fprintf(stderr, "rds-ping version %s\n", RDS_VERSION);
+
 	fprintf(stderr,
 		"%s\nUsage: rds-ping [options] dst_addr\n"
 		"Options:\n"
@@ -378,8 +384,3 @@ parse_addr(const char *ptr, struct in_addr *ret)
 	return 0;
 }
 
-/*
- * This are completely stupid.  options.c should be removed.
- */
-void print_usage(int durr) { }
-void print_version() { }

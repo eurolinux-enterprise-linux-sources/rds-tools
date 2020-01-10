@@ -23,11 +23,9 @@
 #include <sched.h>
 #include <getopt.h>
 #include <byteswap.h>
-#include "net/rds.h"
+#include "rds.h"
 
-#ifdef DYNAMIC_PF_RDS
 #include "pfhack.h"
-#endif
 
 /*
  *
@@ -199,6 +197,10 @@ static unsigned long	sys_page_size;
  */
 #define ptr64(p)	((unsigned long) (p))
 
+/* need vars as long as dynamic vals are possible */
+int pf = PF_RDS;
+int sol = SOL_RDS;
+
 /* zero is undefined */
 static inline uint64_t minz(uint64_t a, uint64_t b)
 {
@@ -255,7 +257,9 @@ static uint32_t parse_addr(char *ptr)
 
 static void usage(void)
 {
-	printf(
+        fprintf(stderr, "rds-stress version %s\n", RDS_VERSION);
+
+	fprintf(stderr,
 	"\n"
 	"Send & Recv parameters:\n"
 	" -r [addr]         use this local address\n"
@@ -496,14 +500,14 @@ static int bound_socket(int domain, int type, int protocol,
 			struct sockaddr_in *sin)
 {
 	int fd;
-	int opt;
+	int sockopt;
 
 	fd = socket(domain, type, protocol);
 	if (fd < 0)
 		die_errno("socket(%d, %d, %d) failed", domain, type, protocol);
 
-	opt = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
+	sockopt = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sockopt, sizeof(sockopt)))
 		die_errno("setsockopt(SO_REUSEADDR) failed");
 
 	if (bind(fd, (struct sockaddr *)sin, sizeof(struct sockaddr_in)))
@@ -528,7 +532,7 @@ static int rds_socket(struct options *opts, struct sockaddr_in *sin)
 	int val;
 	socklen_t optlen;
 
-	fd = bound_socket(PF_RDS, SOCK_SEQPACKET, 0, sin);
+	fd = bound_socket(pf, SOCK_SEQPACKET, 0, sin);
 
 	bytes = opts->nr_tasks * opts->req_depth *
 		(opts->req_size + opts->ack_size) * 2;
@@ -556,7 +560,7 @@ static int rds_socket(struct options *opts, struct sockaddr_in *sin)
 
 	val = 1;
 	if (opts->use_cong_monitor
-	 && setsockopt(fd, SOL_RDS, RDS_CONG_MONITOR, &val, sizeof(val))) {
+	 && setsockopt(fd, sol, RDS_CONG_MONITOR, &val, sizeof(val))) {
 		if (errno != ENOPROTOOPT)
 			die_errno("setsockopt(RDS_CONG_MONITOR) failed");
 		printf("Kernel does not support congestion monitoring; disabled\n");
@@ -584,10 +588,10 @@ static int check_rdma_support(struct options *opts)
 	sin.sin_port = htons(opts->starting_port);
 	sin.sin_addr.s_addr = htonl(opts->receive_addr);
 
-	fd = bound_socket(AF_RDS, SOCK_SEQPACKET, 0, &sin);
+	fd = bound_socket(pf, SOCK_SEQPACKET, 0, &sin);
 
 	memset(&args, 0, sizeof(args));
-	if (setsockopt(fd, SOL_RDS, RDS_FREE_MR, &args, sizeof(args)) >= 0) {
+	if (setsockopt(fd, sol, RDS_FREE_MR, &args, sizeof(args)) >= 0) {
 		okay = 1;
 	} else if (errno == ENOPROTOOPT) {
 		okay = 0;
@@ -612,7 +616,7 @@ static uint64_t get_rdma_key(int fd, uint64_t addr, uint32_t size)
 	if (opt.rdma_use_once)
 		mr_args.flags |= RDS_RDMA_USE_ONCE;
 
-	if (setsockopt(fd, SOL_RDS, RDS_GET_MR, &mr_args, sizeof(mr_args)))
+	if (setsockopt(fd, sol, RDS_GET_MR, &mr_args, sizeof(mr_args)))
 		die_errno("setsockopt(RDS_GET_MR) failed (%u allocated)", mrs_allocated);
 
 	trace("RDS get_rdma_key() = %Lx\n",
@@ -634,7 +638,7 @@ static void free_rdma_key(int fd, uint64_t key)
 #else
 	mr_args.flags = RDS_FREE_MR_ARGS_INVALIDATE;
 #endif
-	if (setsockopt(fd, SOL_RDS, RDS_FREE_MR, &mr_args, sizeof(mr_args)))
+	if (setsockopt(fd, sol, RDS_FREE_MR, &mr_args, sizeof(mr_args)))
 		die_errno("setsockopt(RDS_FREE_MR) failed");
 	mrs_allocated--;
 }
@@ -1018,7 +1022,7 @@ static void rdma_put_cmsg(struct msghdr *msg, int type,
 	msg->msg_controllen = CMSG_SPACE(size);
 
 	cmsg = CMSG_FIRSTHDR(msg);
-	cmsg->cmsg_level = SOL_RDS;
+	cmsg->cmsg_level = sol;
 	cmsg->cmsg_type = type;
 	cmsg->cmsg_len = CMSG_LEN(size);
 	memcpy(CMSG_DATA(cmsg), ptr, size);
@@ -1207,7 +1211,8 @@ static int send_packet(int fd, struct task *t,
 			/* Use the RDMA_MAP cmsg to have sendmsg do the
 			 * mapping on the fly. */
 			rdma_build_cmsg_map(&msg, hdr->rdma_addr,
-					hdr->rdma_size, &cookie);
+					    hdr->rdma_size * hdr->rdma_vector,
+					    &cookie);
 		}
 	}
 
@@ -1403,7 +1408,7 @@ static int recv_message(int fd,
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		struct rds_rdma_notify notify;
 
-		if (cmsg->cmsg_level != SOL_RDS)
+		if (cmsg->cmsg_level != sol)
 			continue;
 		switch (cmsg->cmsg_type) {
 		case RDS_CMSG_CONG_UPDATE:
@@ -1562,6 +1567,7 @@ static void run_child(pid_t parent_pid, struct child_control *ctl,
 	/* give main display thread a little edge? */
 	nice(5);
 
+	/* send to *all* remote tasks */
 	memset(tasks, 0, sizeof(tasks));
 	for (i = 0; i < opts->nr_tasks; i++) {
 		tasks[i].nr = i;
@@ -1899,14 +1905,14 @@ get_perfdata(int initialize)
 	int i, count, item_size;
 
 	if (sock_fd < 0) {
-		sock_fd = socket(PF_RDS, SOCK_SEQPACKET, 0);
+		sock_fd = socket(pf, SOCK_SEQPACKET, 0);
 		if (sock_fd < 0)
 			die_errno("Unable to create socket");
 	}
 
 	/* We should only loop once on the first call; after that the
 	 * buffer requirements for RDS counters should not change. */
-	while ((item_size = getsockopt(sock_fd, SOL_RDS, RDS_INFO_COUNTERS, curr, &buflen)) < 0) {
+	while ((item_size = getsockopt(sock_fd, sol, RDS_INFO_COUNTERS, curr, &buflen)) < 0) {
 		if (errno != ENOSPC)
 			die_errno("getsockopt(RDS_INFO_COUNTERS) failed");
 		curr = realloc(curr, buflen);
@@ -2151,12 +2157,13 @@ static void release_children_and_wait(struct options *opts,
 
 		scale = 1e6 / usec_sub(&last_ts, &first_ts);
 
-		printf("%4u %6lu %10.2f %10.2f %10.2f %7.2f %8.2f %5.2f  (average)\n",
+		printf("%4u %6lu %6lu %10.2f %10.2f %10.2f %7.2f %8.2f %5.2f  (average)\n",
 			opts->nr_tasks,
 			(long) (scale * summary[S_REQ_TX_BYTES].nr),
+			(long) (scale * summary[S_REQ_RX_BYTES].nr),
 			scale * throughput(summary) / 1024.0,
-			scale * throughput_mbi(disp) / 1024.0,
-			scale * throughput_mbo(disp) / 1024.0,
+			scale * throughput_mbi(summary) / 1024.0,
+			scale * throughput_mbo(summary) / 1024.0,
 			avg(&summary[S_SENDMSG_USECS]),
 			avg(&summary[S_RTT_USECS]),
 			soak_arr? scale * cpu_total : -1.0);
@@ -2358,7 +2365,7 @@ static int active_parent(struct options *opts, struct soak_control *soak_arr)
 	verify_option_encdec(opts);
 
 	sin.sin_family = AF_INET;
-	sin.sin_port = htons(opts->starting_port);
+	sin.sin_port = htons(0);
 	sin.sin_addr.s_addr = htonl(opts->receive_addr);
 
 	fd = bound_socket(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sin);
@@ -2412,6 +2419,8 @@ static int passive_parent(uint32_t addr, uint16_t port,
 	sin.sin_addr.s_addr = htonl(addr);
 
 	lfd = bound_socket(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sin);
+
+	printf("waiting for incoming connection on %s:%d\n", inet_ntoa(sin.sin_addr), port);
 
 	if (listen(lfd, 255))
 		die_errno("listen() failed");
@@ -2543,10 +2552,10 @@ void stop_soakers(struct soak_control *soak_arr)
 }
 
 void check_size(uint32_t size, uint32_t unspec, uint32_t max, char *desc,
-		char *opt)
+		char *option)
 {
 	if (size == ~0)
-		die("specify %s with %s\n", desc, opt);
+		die("specify %s with %s\n", desc, option);
 	if (size < max)
 		die("%s must be at least %u bytes\n", desc, max);
 }
@@ -2602,9 +2611,8 @@ int main(int argc, char **argv)
 	struct soak_control *soak_arr = NULL;
 
 #ifdef DYNAMIC_PF_RDS
-	/* Discover PF_RDS/SOL_RDS once, and be done with it */
-	(void) discover_pf_rds();
-	(void) discover_sol_rds();
+	pf = discover_pf_rds();
+	sol = discover_sol_rds();
 #endif
 
 #ifdef _SC_PAGESIZE
@@ -2644,7 +2652,7 @@ int main(int argc, char **argv)
 	while(1) {
 		int c, index;
 
-		c = getopt_long(argc, argv, "+a:cD:d:hM:Op:q:Rr:s:t:T:U:vVz",
+		c = getopt_long(argc, argv, "+a:cD:d:hI:M:op:q:Rr:s:t:T:vVz",
 				long_options, &index);
 		if (c == -1)
 			break;
@@ -2782,8 +2790,3 @@ int main(int argc, char **argv)
 	return active_parent(&opts, soak_arr);
 }
 
-/*
- * This are completely stupid.  options.c should be removed.
- */
-void print_usage(int durr) { }
-void print_version() { }

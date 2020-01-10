@@ -6,11 +6,11 @@ incdir		= $(DESTDIR)${prefix}/include
 
 all: all-programs
 
-CFLAGS = -O2 -Wall
-CPPFLAGS = -DDEBUG_EXE -MD -MP -MF $(@D)/.$(basename $(@F)).d
+CFLAGS = -O2 -Wall -Iinclude
+CPPFLAGS = -DDEBUG_EXE -DRDS_VERSION=\"2.0.4\" -MD -MP -MF $(@D)/.$(basename $(@F)).d
 
-HEADERS = kernel-list.h rdstool.h pfhack.h net/rds.h net/ib_rds.h
-COMMON_SOURCES = options.c stats.c pfhack.c
+HEADERS = kernel-list.h pfhack.h include/rds.h
+COMMON_SOURCES = pfhack.c
 SOURCES = $(addsuffix .c,$(PROGRAMS)) $(COMMON_SOURCES)
 CLEAN_OBJECTS = $(addsuffix .o,$(PROGRAMS)) $(subst .c,.o,$(COMMON_SOURCES))
 
@@ -24,7 +24,7 @@ else
 COMMON_OBJECTS = $(subst .c,.o,$(filter-out pfhack.c,$(COMMON_SOURCES)))
 endif
 
-PROGRAMS = rds-gen rds-sink rds-info rds-stress rds-ping
+PROGRAMS = rds-info rds-stress rds-ping
 
 all-programs: $(PROGRAMS)
 
@@ -36,7 +36,7 @@ install: $(PROGRAMS)
 	install -m 644 *.1 $(mandir)/man1
 	install -m 644 *.7 $(mandir)/man7
 	install -d $(incdir)/net
-	install -m 444 net/rds.h $(incdir)/net
+	install -m 444 include/rds.h $(incdir)/net
 
 clean:
 	rm -f $(PROGRAMS) $(CLEAN_OBJECTS)
@@ -55,15 +55,13 @@ ifneq ($(LOCAL_DFILES),)
 -include $(LOCAL_DFILES)
 endif
 
-VERSION := 1.5
+VERSION := 2.0.4
 RELEASE := 1
 
-TAR_PREFIX := rds-tools-$(VERSION)-$(RELEASE)
+TAR_PREFIX := rds-tools-$(VERSION)
 TAR_FILE := $(TAR_PREFIX).tar.gz
 
 EXTRA_DIST := 	rds-info.1 \
-		rds-gen.1 \
-		rds-sink.1 \
 		rds-stress.1 \
 		rds-ping.1 \
 		rds.7 \

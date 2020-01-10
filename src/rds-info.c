@@ -47,8 +47,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "net/rds.h"
-#include "rdstool.h"
+#include "rds.h"
+#include "pfhack.h"
 
 #define rds_conn_flag(conn, flag, letter) \
 	(conn.flags & RDS_INFO_CONNECTION_FLAG_##flag ? letter : '-')
@@ -67,7 +67,14 @@
 	for (;len > 0 && copy_into(var, data, each);	\
 	     data += each, len -= min(len, each))
 
+#define verbosef(lvl, f, fmt, a...) do { \
+        if (opt_verbose >= (lvl)) \
+                fprintf((f), fmt, ##a); \
+} while (0)
+
 static int	opt_verbose = 0;
+
+char *progname = "rds-info";
 
 /* Like inet_ntoa, but can be re-entered several times without clobbering
  * the previously returned string. */
@@ -104,32 +111,9 @@ static void print_counters(void *data, int each, socklen_t len, void *extra)
 		printf("%25s %16"PRIu64"\n", ctr.name, ctr.value);
 }
 
-static void print_sockets_v1(void *data, int each, socklen_t len, void *extra)
-{
-	struct rds_info_socket_v1 sk;
-
-	printf("\nRDS Sockets:\n%15s %5s %15s %5s %10s %10s\n",
-		"BoundAddr", "BPort", "ConnAddr", "CPort", "SndBuf",
-		"RcvBuf");
-	
-	for_each(sk, data, each, len) {
-		printf("%15s %5u %15s %5u %10u %10u\n",
-			ipv4addr(sk.bound_addr),
-			ntohs(sk.bound_port),
-			ipv4addr(sk.connected_addr),
-			ntohs(sk.connected_port),
-			sk.sndbuf, sk.rcvbuf);
-	}
-}
-
 static void print_sockets(void *data, int each, socklen_t len, void *extra)
 {
 	struct rds_info_socket sk;
-
-	if (each == sizeof(struct rds_info_socket_v1)) {
-		print_sockets_v1(data, each, len, extra);
-		return;
-	}
 
 	printf("\nRDS Sockets:\n%15s %5s %15s %5s %10s %10s %8s\n",
 		"BoundAddr", "BPort", "ConnAddr", "CPort", "SndBuf",
@@ -205,7 +189,7 @@ static void print_tcp_socks(void *data, int each, socklen_t len, void *extra)
 
 static void print_ib_conns(void *data, int each, socklen_t len, void *extra)
 {
-	struct rds_info_ib_connection ic;
+	struct rds_info_rdma_connection ic;
 
 	printf("\nRDS IB Connections:\n%15s %15s %32s %32s\n",
 		"LocalAddr", "RemoteAddr", "LocalDev", "RemoteDev");
@@ -221,8 +205,8 @@ static void print_ib_conns(void *data, int each, socklen_t len, void *extra)
 			printf("  send_wr=%u", ic.max_send_wr);
 			printf(", recv_wr=%u", ic.max_recv_wr);
 			printf(", send_sge=%u", ic.max_send_sge);
-			printf(", rdma_fmr_max=%u", ic.rdma_fmr_max);
-			printf(", rdma_fmr_size=%u", ic.rdma_fmr_size);
+			printf(", rdma_mr_max=%u", ic.rdma_mr_max);
+			printf(", rdma_mr_size=%u", ic.rdma_mr_size);
 		}
 
 		printf("\n");
@@ -256,10 +240,12 @@ struct info infos[] = {
 		  print_ib_conns, NULL, 0 },
 };
 
-void print_usage(int rc)
+static void print_usage(int rc)
 {
 	FILE *output = rc ? stderr : stdout;
 	int i;
+
+	fprintf(stderr, "rds-info version %s\n", RDS_VERSION);
 
 	verbosef(0, output, "The following options limit output to the given "
 		 "sources:\n");
@@ -275,10 +261,6 @@ void print_usage(int rc)
 	exit(rc);
 }
 
-void print_version()
-{
-}
-
 int main(int argc, char **argv)
 {
 	char optstring[258] = "v+";
@@ -290,6 +272,8 @@ int main(int argc, char **argv)
 	int c;
 	char *last;
 	int i;
+	int pf;
+	int sol;
 
 	/* quickly append all our info options to the optstring */
 	last = &optstring[strlen(optstring)];
@@ -318,7 +302,14 @@ int main(int argc, char **argv)
 		given_options++;
 	}
 
-	fd = socket(PF_RDS, SOCK_SEQPACKET, 0);
+#ifdef DYNAMIC_PF_RDS
+	pf = discover_pf_rds();
+	sol = discover_sol_rds();
+#else
+	pf = PF_RDS;
+	sol = SOL_RDS;
+#endif
+	fd = socket(pf, SOCK_SEQPACKET, 0);
 	if (fd < 0) {
 		verbosef(0, stderr, "%s: Unable to create socket: %s\n",
 			 progname, strerror(errno));
@@ -332,7 +323,7 @@ int main(int argc, char **argv)
 			continue;
 
 		/* read in the info until we get a full snapshot */
-		while ((each = getsockopt(fd, SOL_RDS, infos[i].opt_val, data,
+		while ((each = getsockopt(fd, sol, infos[i].opt_val, data,
 				   &len)) < 0) {
 			if (errno != ENOSPC) {
 				verbosef(0, stderr,
