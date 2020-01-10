@@ -1,7 +1,7 @@
 Name:		rds-tools
 Summary:	RDS support tools 
 Version:	2.0.6
-Release:	3%{?dist}
+Release:	4%{?dist}
 License:	GPLv2 or BSD
 Group:		Applications/System
 URL:		http://oss.oracle.com/projects/rds/
@@ -10,6 +10,7 @@ Source1:	rds-tools-modprobe.conf
 Patch0:		rds-tools-1.5-pfhack.patch
 Patch1:		rds-tools-make.patch
 Patch2:		rds-tools-2.0.6-ping-segfault.patch
+Patch3:		rds-stress-send-msg-anysize.patch
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 ExcludeArch:	s390 s390x
 
@@ -27,6 +28,8 @@ hardware.
 %patch1 -p1
 # rds-ping can segfault due to reusing sockets too early, fix that
 %patch2 -p1 -b .segfault
+# rds-stress is failing to send messages of any size 
+%patch3 -p1
 
 %build
 %configure
@@ -50,6 +53,10 @@ rm -rf %{buildroot}
 %{_sysconfdir}/modprobe.d/rds.conf
 
 %changelog
+* Thu Jan 21 2016 Donald Dutile <ddutile@redhat.com> - 2.0.6-4
+- Fix rds-stress from failing to send msg of any size
+- Resolves: bz746716
+
 * Fri May 04 2012 Doug Ledford <dledford@redhat.com> - 2.0.6-3
 - Fix segfault in rds-ping for real this time
 - Resolves: bz804002
